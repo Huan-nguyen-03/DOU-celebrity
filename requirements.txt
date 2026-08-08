@@ -11,3 +11,13 @@ diffusers
 tqdm
 apex
 git+https://github.com/notAI-tech/NudeNet.git
+
+# --- DUO_celebrity eval (identity + COCO utility) ---
+torchmetrics[image]
+matplotlib
+scipy
+safetensors
+pillow
+insightface
+opencv-python-headless
+onnxruntime

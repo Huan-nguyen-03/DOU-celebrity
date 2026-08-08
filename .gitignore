@@ -8,3 +8,7 @@ Suffer/
 *.sw*
 *.png
 *.jpg
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+*.zip

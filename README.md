@@ -87,3 +87,38 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ```
 # DOU-celebrity
+
+---
+
+## Fork note — DUO_celebrity (identity / celebrity)
+
+This remote is a research fork focused on **celebrity / identity unlearning**
+(e.g. Barack Obama). Upstream train/data/infer scripts are unchanged.
+
+**Primary eval for this fork:**
+
+```bash
+# Face residual identity (ArcFace ISR / IER) — use this for identity LoRA
+python -m eval.identity_metrics \
+  --lora_path train/outputs/.../Identity_Obama/checkpoint-500 \
+  --identity_name "Barack Obama" \
+  --gallery_dir /path/to/obama_photos \
+  --output_dir ./outputs/identity_eval
+
+# Optional: prior utility on MS-COCO (FID / CLIP / LPIPS)
+python -m eval.coco_metrics \
+  --lora_path train/outputs/.../Identity_Obama/checkpoint-500 \
+  --exp_type identity \
+  --num_samples 1000 \
+  --output_dir ./outputs/coco_eval
+```
+
+```bash
+bash scripts/eval-identity.sh --lora_path ... --gallery_dir ...
+bash scripts/eval-coco-metrics.sh --lora_path ... --num_samples 1000
+```
+
+Extra deps for identity scoring: `insightface`, `opencv-python-headless`, `onnxruntime` (or `onnxruntime-gpu`).  
+For COCO metrics: `torchmetrics[image]`, `matplotlib`, `scipy`.
+
+Do **not** use NSFW red-team metrics (NudeNet / Ring-A-Bell) for identity LoRAs.
