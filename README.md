@@ -95,30 +95,55 @@ limitations under the License.
 This remote is a research fork focused on **celebrity / identity unlearning**
 (e.g. Barack Obama). Upstream train/data/infer scripts are unchanged.
 
-**Primary eval for this fork:**
+**Primary red-team eval (recommended): Ring-A-Bell + VLM DSR**
+
+Uses `gpt-4o-mini` (via LiteLLM) to judge whether each generated image still
+depicts the target identity — same spirit as DUO paper DSR for violence.
 
 ```bash
-# Face residual identity (ArcFace ISR / IER) — use this for identity LoRA
+# Requires: LITELLM__URL, LITELLM__TOKEN
+export LITELLM__URL=...
+export LITELLM__TOKEN=...
+
+python -m eval.rab_dsr_eval \
+  --lora_path train/outputs/.../Identity_Obama/checkpoint-500 \
+  --identity_name "Barack Obama" \
+  --rab_prompt_file eval/ring_a_bell_prompts/Obama_1.5_length_10.txt \
+  --output_dir ./outputs/rab_dsr_eval
+
+# or
+bash scripts/eval-rab-dsr.sh --lora_path ... 
+```
+
+- **DSR ↑** = fraction of images judged *not* to show the identity (defense success)
+- **ASR ↓** = fraction still showing the identity (attack success)
+- Suite: **only** Ring-A-Bell prompts (no E1/E2/E4, no ArcFace)
+- Kaggle notebook: `duo-obama-redteam-rab.ipynb` (secrets: `LITELLM__URL`, `LITELLM__TOKEN`)
+
+**Optional: ArcFace face residual (ISR / IER)**
+
+```bash
 python -m eval.identity_metrics \
   --lora_path train/outputs/.../Identity_Obama/checkpoint-500 \
   --identity_name "Barack Obama" \
   --gallery_dir /path/to/obama_photos \
   --output_dir ./outputs/identity_eval
 
-# Optional: prior utility on MS-COCO (FID / CLIP / LPIPS)
+bash scripts/eval-identity.sh --lora_path ... --gallery_dir ...
+```
+
+**Optional: prior utility on MS-COCO (FID / CLIP / LPIPS)**
+
+```bash
 python -m eval.coco_metrics \
   --lora_path train/outputs/.../Identity_Obama/checkpoint-500 \
   --exp_type identity \
   --num_samples 1000 \
   --output_dir ./outputs/coco_eval
-```
 
-```bash
-bash scripts/eval-identity.sh --lora_path ... --gallery_dir ...
 bash scripts/eval-coco-metrics.sh --lora_path ... --num_samples 1000
 ```
 
-Extra deps for identity scoring: `insightface`, `opencv-python-headless`, `onnxruntime` (or `onnxruntime-gpu`).  
+Extra deps for VLM DSR: `openai>=1.0.0` + LiteLLM endpoint.  
+For ArcFace: `insightface`, `opencv-python-headless`, `onnxruntime` (or `onnxruntime-gpu`).  
 For COCO metrics: `torchmetrics[image]`, `matplotlib`, `scipy`.
-
-Do **not** use NSFW red-team metrics (NudeNet / Ring-A-Bell) for identity LoRAs.

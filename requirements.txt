@@ -21,3 +21,5 @@ pillow
 insightface
 opencv-python-headless
 onnxruntime
+# VLM DSR judge (gpt-4o-mini via LiteLLM OpenAI-compatible API)
+openai>=1.0.0

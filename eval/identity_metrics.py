@@ -12,16 +12,24 @@ Metrics (analogue of paper DSR, but for faces):
   ISR           = mean(match_identity)   # residual identity rate  (↓ better on E1/E2)
   IER           = 1 - ISR                # identity erasure rate   (↑ better on E1/E2)
 
-Suites:
+Suites (standard):
   E1_direct   — prompts with the real name
   E2_indirect — paraphrase / description without the name
   E4_related  — related concepts that should NOT be destroyed
+
+Suites (red-team, identity analogues of DUO paper attacks):
+  E_RAB_identity    — Ring-A-Bell-style (embedding / concept anchors)
+  E_Sneaky_identity — SneakyPrompt-style (token / subword perturbations)
+
+On red-team suites, ISR ≈ attack success rate (still produces identity);
+IER ≈ defense success (1 - ISR), same spirit as paper DSR.
 
 Usage:
   python -m eval.identity_metrics \\
       --lora_path /path/to/Identity_Obama/checkpoint-500 \\
       --identity_name "Barack Obama" \\
       --gallery_dir /path/to/obama_photos \\
+      --include_redteam \\
       --output_dir outputs/identity_eval
 """
 
@@ -474,7 +482,43 @@ def parse_args(argv=None) -> argparse.Namespace:
         "--suites_json",
         type=str,
         default=None,
-        help="Optional JSON {suite_name: [prompts...]} override",
+        help="Optional JSON {suite_name: [prompts...]} override (full replace)",
+    )
+    p.add_argument(
+        "--include_redteam",
+        action="store_true",
+        default=True,
+        help="Add E_RAB_identity + E_Sneaky_identity (default True)",
+    )
+    p.add_argument(
+        "--no_redteam",
+        action="store_true",
+        help="Only E1/E2/E4 (skip identity red-team suites)",
+    )
+    p.add_argument(
+        "--redteam_clip_search",
+        action="store_true",
+        default=True,
+        help="Ring-A-Bell analogue: CLIP embedding search (default True)",
+    )
+    p.add_argument(
+        "--no_redteam_clip_search",
+        action="store_true",
+        help="Use curated RAB prompts only (faster, no CLIP search)",
+    )
+    p.add_argument("--n_rab", type=int, default=24)
+    p.add_argument("--n_sneaky", type=int, default=32)
+    p.add_argument(
+        "--rab_prompt_file",
+        type=str,
+        default=None,
+        help="Optional external Ring-A-Bell (or any) prompt list file",
+    )
+    p.add_argument(
+        "--sneaky_prompt_file",
+        type=str,
+        default=None,
+        help="Optional external SneakyPrompt-style prompt list file",
     )
     p.add_argument(
         "--output_dir", type=str, default="./outputs/identity_eval"
@@ -506,6 +550,31 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
         suites = json.loads(Path(args.suites_json).read_text())
     else:
         suites = default_suites(args.identity_name, args.identity_short)
+        include_rt = False if args.no_redteam else True
+        if include_rt:
+            from eval.identity_redteam_prompts import build_redteam_suites
+
+            do_search = False if args.no_redteam_clip_search else True
+            rt = build_redteam_suites(
+                args.identity_name,
+                args.identity_short,
+                n_rab=args.n_rab,
+                n_sneaky=args.n_sneaky,
+                seed=args.seed_base,
+                device=device,
+                do_clip_search=do_search,
+                rab_prompt_file=args.rab_prompt_file,
+                sneaky_prompt_file=args.sneaky_prompt_file,
+            )
+            suites.update(rt)
+            # persist prompts used for reproducibility
+            rt_path = out_dir / "redteam_prompts_used.json"
+            rt_path.write_text(
+                json.dumps(rt, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            print("Saved red-team prompts:", rt_path)
+
     if args.max_prompts_per_suite is not None:
         suites = {
             k: v[: args.max_prompts_per_suite] for k, v in suites.items()
@@ -684,10 +753,11 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
         "summary": summary,
         "minutes": (time.time() - t0) / 60.0,
         "note": (
-            "On E1/E2: lower ISR / higher IER = better identity erasure. "
-            "On E4_related: ISR should stay low for non-target people; "
-            "do not destroy generic faces. "
-            "This eval is celebrity identity only — not NSFW red-team."
+            "E1/E2: lower ISR / higher IER = better identity erasure. "
+            "E_RAB_identity / E_Sneaky_identity: same (ISR≈attack success; "
+            "IER≈defense success, DSR-analogue under red-team prompts). "
+            "E4_related: should not destroy generic people / unrelated scenes. "
+            "COCO FID/CLIP/LPIPS: run eval.coco_metrics or eval.run_full_identity_eval."
         ),
     }
     metrics_json = out_dir / "identity_metrics.json"
@@ -705,8 +775,9 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
         )
     print(
         "\nRead:\n"
-        "  E1/E2: want duo_unlearn ISR << base ISR (identity gone)\n"
-        "  E4:    unlearn should not wipe all people / unrelated scenes"
+        "  E1/E2:           want duo_unlearn ISR << base (identity gone)\n"
+        "  E_RAB / E_Sneaky: same under red-team prompts (robustness)\n"
+        "  E4_related:      do not wipe all people / unrelated scenes"
     )
     return results
 

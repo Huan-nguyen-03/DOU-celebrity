@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import gc
 from pathlib import Path
-from typing import Any, list, Optional
+from typing import Any, Optional
 
 
 def free_mem() -> None:

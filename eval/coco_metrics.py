@@ -101,34 +101,55 @@ def compute_clip_score(
 ) -> float:
     import torch
     from PIL import Image
-    from torchmetrics.multimodal.clip_score import CLIPScore
     from torchvision import transforms
     from tqdm.auto import tqdm
 
-    assert len(image_paths) == len(captions)
-    metric = CLIPScore(
-        model_name_or_path="openai/clip-vit-base-patch32"
-    ).to(device)
+    # Manual CLIP: bypass torchmetrics which fails on new transformers
+    import transformers
+    from transformers import CLIPModel, CLIPProcessor
 
+    model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
+    processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+
+    scores: List[float] = []
     with torch.inference_mode():
         for i in tqdm(
             range(0, len(image_paths), batch_size), desc="CLIPScore"
         ):
             batch_paths = image_paths[i : i + batch_size]
             batch_caps = list(captions[i : i + batch_size])
-            imgs = []
-            for p in batch_paths:
-                im = Image.open(p).convert("RGB").resize(
-                    (224, 224), Image.BICUBIC
-                )
-                imgs.append(transforms.functional.pil_to_tensor(im))
-            imgs_t = torch.stack(imgs).to(device)
-            metric.update(imgs_t, batch_caps)
+            imgs = [Image.open(p).convert("RGB") for p in batch_paths]
 
-        val = float(metric.compute().detach().cpu())
-    del metric
+            inputs = processor(
+                text=batch_caps, images=imgs, return_tensors="pt",
+                padding=True, truncation=True,
+            ).to(device)
+
+            outputs = model(**inputs)
+            # outputs: CLIPOutput with text_embeds, image_embeds
+            if hasattr(outputs, "text_embeds") and outputs.text_embeds is not None:
+                text_feats = outputs.text_embeds
+            elif hasattr(outputs, "text_model_output") and hasattr(outputs.text_model_output, "pooler_output"):
+                text_feats = outputs.text_model_output.pooler_output
+            else:
+                text_feats = outputs.text_model_output.last_hidden_state.mean(dim=1)
+
+            if hasattr(outputs, "image_embeds") and outputs.image_embeds is not None:
+                img_feats = outputs.image_embeds
+            elif hasattr(outputs, "vision_model_output") and hasattr(outputs.vision_model_output, "pooler_output"):
+                img_feats = outputs.vision_model_output.pooler_output
+            else:
+                img_feats = outputs.vision_model_output.last_hidden_state.mean(dim=1)
+
+            text_feats = text_feats / text_feats.norm(p=2, dim=-1, keepdim=True)
+            img_feats = img_feats / img_feats.norm(p=2, dim=-1, keepdim=True)
+
+            sim = (img_feats * text_feats).sum(dim=-1)
+            scores.extend(sim.float().cpu().tolist())
+
+    del model, processor
     free_mem()
-    return val
+    return float(sum(scores)) / max(len(scores), 1)
 
 
 def compute_fid(
@@ -376,6 +397,128 @@ def zip_bundle(output_dir: Path, zip_path: Path, n_preview: int = 20) -> None:
         for p in sample_dir.glob("*.png"):
             z.write(p, arcname=f"samples_preview/{p.name}")
     print("Bundle:", zip_path)
+
+
+# ---------------------------------------------------------------------------
+# COCO caption loading + real image export
+# ---------------------------------------------------------------------------
+def load_coco_captions(
+    num_samples: int, seed: int
+) -> Tuple[List[Dict[str, Any]], Any, Dict[int, int]]:
+    """Load num_samples captions from COCO val2014, deterministically.
+
+    Downloads annotations JSON on first call, caches as captions_val2014.json.
+    Returns (records, coco_ds_ref=None, coco_id_to_idx).
+    """
+    import json
+    import os
+    import random
+    from urllib.request import urlretrieve
+
+    ann_path = Path("captions_val2014.json")
+    if not ann_path.exists():
+        use_hf = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")
+        hf_ok = False
+        if use_hf:
+            try:
+                from huggingface_hub import hf_hub_download
+                hf_hub_download(
+                    repo_id="Detectron2/COCO_captions",
+                    filename="annotations/captions_val2014.json",
+                    local_dir=".",
+                    local_dir_use_symlinks=False,
+                    token=use_hf,
+                )
+                src = Path("annotations/captions_val2014.json")
+                if src.exists():
+                    import shutil
+                    shutil.move(str(src), str(ann_path))
+                    shutil.rmtree("annotations", ignore_errors=True)
+                    print("Downloaded captions_val2014.json via HF Hub")
+                    hf_ok = True
+            except Exception as e:
+                print(f"HF Hub download failed ({e}), trying official server ...")
+
+        if not hf_ok:
+            print("Downloading captions_val2014.json from official COCO server ...")
+            urlretrieve(
+                "http://images.cocodataset.org/annotations/annotations_trainval2014.zip",
+                "annotations_trainval2014.zip",
+            )
+            import zipfile
+            with zipfile.ZipFile("annotations_trainval2014.zip", "r") as zf:
+                zf.extract("annotations/captions_val2014.json", ".")
+            import shutil
+            shutil.move("annotations/captions_val2014.json", "captions_val2014.json")
+            shutil.rmtree("annotations", ignore_errors=True)
+            print("Extracted captions_val2014.json from official zip")
+
+    with open(ann_path, "r", encoding="utf-8") as f:
+        coco = json.load(f)
+
+    id_to_caps: Dict[int, List[str]] = {}
+    for ann in coco["annotations"]:
+        id_to_caps.setdefault(ann["image_id"], []).append(ann["caption"])
+
+    img_ids = sorted(id_to_caps.keys())
+    rng = random.Random(seed)
+    rng.shuffle(img_ids)
+    selected = img_ids[:num_samples]
+
+    records: List[Dict[str, Any]] = []
+    coco_id_to_idx: Dict[int, int] = {}
+    for i, img_id in enumerate(selected):
+        coco_id_to_idx[img_id] = i
+        records.append({"image_id": img_id, "caption": id_to_caps[img_id][0]})
+
+    print(f"Loaded {len(records)} captions from COCO val2014 annotations (seed={seed})")
+    return records, None, coco_id_to_idx
+
+
+def export_real_coco(
+    records: List[Dict[str, Any]],
+    coco_ds: Any,  # ignored
+    coco_id_to_idx: Dict[int, int],
+    out_dir: Path,
+    image_size: int,
+    resume: bool,
+) -> None:
+    """Export real COCO images for FID computation.
+
+    Downloads val2014.zip on first call, caches at out_dir/../val2014/.
+    """
+    import zipfile
+    from urllib.request import urlretrieve
+
+    from PIL import Image
+    from tqdm.auto import tqdm
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    img_dir = out_dir.parent / "val2014"
+    if not img_dir.exists():
+        zip_path = out_dir.parent / "val2014.zip"
+        if not zip_path.exists():
+            url = "http://images.cocodataset.org/zips/val2014.zip"
+            print(f"Downloading COCO val2014 images from {url} ...")
+            urlretrieve(url, str(zip_path))
+        print("Extracting val2014.zip ...")
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            zf.extractall(out_dir.parent)
+        print(f"Extracted to {img_dir}")
+
+    for i, rec in enumerate(tqdm(records, desc="Export real COCO")):
+        out_path = out_dir / f"{i:06d}.png"
+        if resume and out_path.exists():
+            continue
+        img_id = rec["image_id"]
+        img_path = img_dir / f"COCO_val2014_{img_id:012d}.jpg"
+        if not img_path.exists():
+            print(f"Warning: missing {img_path.name}, skip")
+            continue
+        img = Image.open(img_path).convert("RGB")
+        img = img.resize((image_size, image_size), Image.BICUBIC)
+        img.save(out_path)
 
 
 # ---------------------------------------------------------------------------
