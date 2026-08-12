@@ -86,16 +86,23 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ```
-# DOU-celebrity
+# DUO-celebrity
 
 ---
 
 ## Fork note — DUO_celebrity (identity / celebrity)
 
-This remote is a research fork focused on **celebrity / identity unlearning**
-(e.g. Barack Obama). Upstream train/data/infer scripts are unchanged.
+Research fork for **celebrity / identity unlearning** (e.g. Barack Obama).
+Upstream train/data/infer scripts are unchanged.
 
-**Primary red-team eval (recommended): Ring-A-Bell + VLM DSR**
+Eval stack is intentionally small:
+
+| Eval | Module | Metric |
+|------|--------|--------|
+| **Red-team (Ring-A-Bell)** | `eval.rab_dsr_eval` | DSR / ASR via gpt-4o-mini |
+| **Prior utility (MS-COCO)** | `eval.coco_metrics` | FID / CLIP / LPIPS |
+
+### 1. Ring-A-Bell + VLM DSR
 
 Uses `gpt-4o-mini` (via LiteLLM) to judge whether each generated image still
 depicts the target identity — same spirit as DUO paper DSR for violence.
@@ -112,27 +119,14 @@ python -m eval.rab_dsr_eval \
   --output_dir ./outputs/rab_dsr_eval
 
 # or
-bash scripts/eval-rab-dsr.sh --lora_path ... 
+bash scripts/eval-rab-dsr.sh --lora_path ...
 ```
 
 - **DSR ↑** = fraction of images judged *not* to show the identity (defense success)
 - **ASR ↓** = fraction still showing the identity (attack success)
-- Suite: **only** Ring-A-Bell prompts (no E1/E2/E4, no ArcFace)
-- Kaggle notebook: `duo-obama-redteam-rab.ipynb` (secrets: `LITELLM__URL`, `LITELLM__TOKEN`)
+- Kaggle: `duo-obama-redteam-rab.ipynb` (secrets: `LITELLM__URL`, `LITELLM__TOKEN`)
 
-**Optional: ArcFace face residual (ISR / IER)**
-
-```bash
-python -m eval.identity_metrics \
-  --lora_path train/outputs/.../Identity_Obama/checkpoint-500 \
-  --identity_name "Barack Obama" \
-  --gallery_dir /path/to/obama_photos \
-  --output_dir ./outputs/identity_eval
-
-bash scripts/eval-identity.sh --lora_path ... --gallery_dir ...
-```
-
-**Optional: prior utility on MS-COCO (FID / CLIP / LPIPS)**
+### 2. MS-COCO prior utility
 
 ```bash
 python -m eval.coco_metrics \
@@ -144,6 +138,4 @@ python -m eval.coco_metrics \
 bash scripts/eval-coco-metrics.sh --lora_path ... --num_samples 1000
 ```
 
-Extra deps for VLM DSR: `openai>=1.0.0` + LiteLLM endpoint.  
-For ArcFace: `insightface`, `opencv-python-headless`, `onnxruntime` (or `onnxruntime-gpu`).  
-For COCO metrics: `torchmetrics[image]`, `matplotlib`, `scipy`.
+**Deps:** `openai>=1.0.0` + LiteLLM for VLM DSR; `torchmetrics[image]`, `matplotlib`, `scipy`, `lpips` for COCO.

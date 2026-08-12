@@ -12,14 +12,11 @@ tqdm
 apex
 git+https://github.com/notAI-tech/NudeNet.git
 
-# --- DUO_celebrity eval (identity + COCO utility) ---
+# --- DUO_celebrity eval (MS-COCO + Ring-A-Bell VLM DSR) ---
 torchmetrics[image]
 matplotlib
 scipy
 safetensors
 pillow
-insightface
-opencv-python-headless
-onnxruntime
 # VLM DSR judge (gpt-4o-mini via LiteLLM OpenAI-compatible API)
 openai>=1.0.0
