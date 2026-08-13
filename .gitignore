@@ -8,6 +8,10 @@ Suffer/
 *.sw*
 *.png
 *.jpg
+# Keep research gallery images (Concept Inversion)
+!datasets/galleries/**/*.jpg
+!datasets/galleries/**/*.jpeg
+!datasets/galleries/**/*.png
 __pycache__/
 *.py[cod]
 .ipynb_checkpoints/

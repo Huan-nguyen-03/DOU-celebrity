@@ -95,20 +95,20 @@ limitations under the License.
 Research fork for **celebrity / identity unlearning** (e.g. Barack Obama).
 Upstream train/data/infer scripts are unchanged.
 
-Eval stack is intentionally small:
+Eval stack:
 
 | Eval | Module | Metric |
 |------|--------|--------|
 | **Red-team (Ring-A-Bell)** | `eval.rab_dsr_eval` | DSR / ASR via gpt-4o-mini |
+| **Red-team (Concept Inversion)** | `eval.train_concept_inversion` + `eval.ci_dsr_eval` | TI token + DSR |
 | **Prior utility (MS-COCO)** | `eval.coco_metrics` | FID / CLIP / LPIPS |
+
+Obama reference gallery (Wikimedia, research-only):  
+`datasets/galleries/Barack_Obama/` (+ `SOURCES.md`).
 
 ### 1. Ring-A-Bell + VLM DSR
 
-Uses `gpt-4o-mini` (via LiteLLM) to judge whether each generated image still
-depicts the target identity — same spirit as DUO paper DSR for violence.
-
 ```bash
-# Requires: LITELLM__URL, LITELLM__TOKEN
 export LITELLM__URL=...
 export LITELLM__TOKEN=...
 
@@ -118,15 +118,42 @@ python -m eval.rab_dsr_eval \
   --rab_prompt_file eval/ring_a_bell_prompts/Obama_1.5_length_10.txt \
   --output_dir ./outputs/rab_dsr_eval
 
-# or
 bash scripts/eval-rab-dsr.sh --lora_path ...
 ```
 
-- **DSR ↑** = fraction of images judged *not* to show the identity (defense success)
-- **ASR ↓** = fraction still showing the identity (attack success)
-- Kaggle: `duo-obama-redteam-rab.ipynb` (secrets: `LITELLM__URL`, `LITELLM__TOKEN`)
+- **DSR ↑** = images judged *not* to show the identity  
+- Kaggle: `duo-obama-redteam-rab.ipynb`
 
-### 2. MS-COCO prior utility
+### 2. Concept Inversion (Textual Inversion)
+
+Train a soft token on the **unlearned** model using the Obama gallery, then
+generate / score DSR:
+
+```bash
+# Train CI token on unlearn LoRA
+python -m eval.train_concept_inversion \
+  --lora_path train/outputs/.../Identity_Obama/checkpoint-500 \
+  --train_data_dir datasets/galleries/Barack_Obama \
+  --placeholder_token "<obama-ci>" \
+  --output_dir outputs/ci_obama \
+  --max_train_steps 1500
+
+bash scripts/train-concept-inversion.sh --lora_path ...
+
+# DSR with gpt-4o-mini
+python -m eval.ci_dsr_eval \
+  --lora_path train/outputs/.../Identity_Obama/checkpoint-500 \
+  --learned_embeds outputs/ci_obama/learned_embeds.bin \
+  --placeholder_token "<obama-ci>" \
+  --identity_name "Barack Obama" \
+  --output_dir outputs/ci_dsr_eval
+
+bash scripts/eval-ci-dsr.sh --lora_path ... --learned_embeds outputs/ci_obama/learned_embeds.bin
+```
+
+- Kaggle: `duo-obama-concept-inversion.ipynb` (train + optional DSR)
+
+### 3. MS-COCO prior utility
 
 ```bash
 python -m eval.coco_metrics \
@@ -139,3 +166,4 @@ bash scripts/eval-coco-metrics.sh --lora_path ... --num_samples 1000
 ```
 
 **Deps:** `openai>=1.0.0` + LiteLLM for VLM DSR; `torchmetrics[image]`, `matplotlib`, `scipy`, `lpips` for COCO.
+

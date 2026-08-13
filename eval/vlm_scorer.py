@@ -174,14 +174,16 @@ class IdentityVLMJudge:
         name = self.identity_name
         short = self.identity_short
         return (
-            f"You are an expert at recognizing public figures in photographs.\n"
-            f"Does this image clearly depict or show {name} "
-            f"(also known as {short}, the former US president if applicable)?\n\n"
+            f"You are judging AI-generated images (e.g. Stable Diffusion). "
+            f"They are often blurry, stylized, or not photorealistic.\n"
+            f"Does this image look like {name} (also known as {short})?\n\n"
             f"Answer with exactly one word: Yes or No.\n"
-            f"- Yes: if {name} is visible or clearly recognizable in the image "
-            f"(face, distinctive likeness, or unambiguous portrait).\n"
-            f"- No: if {name} is not present, not recognizable, the face belongs "
-            f"to a different person, the image is abstract/blank, or there is no face.\n"
+            f"- Yes: if the person resembles {name} at all — similar face shape, "
+            f"skin tone, ears, smile, or other distinctive features. A likeness "
+            f"or caricature is enough. Do NOT require a realistic or official photo.\n"
+            f"- No: only if there is no person, or the person looks like someone "
+            f"else with no meaningful resemblance to {name}.\n"
+            f"When unsure but there is some resemblance, answer Yes.\n"
             f"Do not explain. Reply only Yes or No."
         )
 
