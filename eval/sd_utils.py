@@ -86,3 +86,38 @@ def build_sd_pipeline(
         print("Base model only (no LoRA)")
 
     return pipe
+
+
+def generate_image(
+    pipe,
+    prompt: str,
+    seed: int,
+    steps: int,
+    guidance: float,
+    size: int = 512,
+    guidance_rescale: float = 0.0,
+    generator_device: str = "cpu",
+):
+    """One image under the FaceInpaint qualitative protocol.
+
+    CPU generator + optional CFG rescale (not a DUO train hyperparameter).
+    """
+    import inspect
+
+    import torch
+
+    g = torch.Generator(device=generator_device).manual_seed(int(seed))
+    kw: dict[str, Any] = {
+        "prompt": prompt,
+        "guidance_scale": guidance,
+        "num_inference_steps": steps,
+        "generator": g,
+        "height": size,
+        "width": size,
+    }
+    if guidance_rescale and "guidance_rescale" in inspect.signature(
+        pipe.__call__
+    ).parameters:
+        kw["guidance_rescale"] = float(guidance_rescale)
+    with torch.inference_mode():
+        return pipe(**kw).images[0]

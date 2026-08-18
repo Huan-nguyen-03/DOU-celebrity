@@ -27,7 +27,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-from eval.sd_utils import build_sd_pipeline, free_mem, find_lora_dir
+from eval.sd_utils import build_sd_pipeline, find_lora_dir, free_mem, generate_image
 from eval.vlm_scorer import IdentityVLMJudge
 
 SUITE_NAME = "E_CI_identity"
@@ -117,19 +117,28 @@ def build_prompts(
     return prompts
 
 
-def gen_one(pipe, prompt: str, seed: int, device: str, steps: int, guidance: float, size: int):
-    import torch
-
-    g = torch.Generator(device=device).manual_seed(int(seed))
-    out = pipe(
+def gen_one(
+    pipe,
+    prompt: str,
+    seed: int,
+    device: str,
+    steps: int,
+    guidance: float,
+    size: int,
+    guidance_rescale: float = 0.0,
+    generator_device: str = "cpu",
+):
+    del device  # noise is drawn on generator_device (cpu) for reproducibility
+    return generate_image(
+        pipe,
         prompt,
-        guidance_scale=guidance,
-        num_inference_steps=steps,
-        generator=g,
-        height=size,
-        width=size,
+        seed,
+        steps,
+        guidance,
+        size=size,
+        guidance_rescale=guidance_rescale,
+        generator_device=generator_device,
     )
-    return out.images[0]
 
 
 def evaluate_model(
@@ -145,6 +154,7 @@ def evaluate_model(
     size: int,
     out_dir: Path,
     save_images: bool,
+    guidance_rescale: float = 0.0,
 ) -> List[Dict[str, Any]]:
     from tqdm.auto import tqdm
 
@@ -160,7 +170,16 @@ def evaluate_model(
     ]
     for pi, prompt, s_i in tqdm(tasks, desc=f"ci-dsr:{model_name}"):
         seed = seed_base + s_i
-        img = gen_one(pipe, prompt, seed, device, steps, guidance, size)
+        img = gen_one(
+            pipe,
+            prompt,
+            seed,
+            device,
+            steps,
+            guidance,
+            size,
+            guidance_rescale=guidance_rescale,
+        )
         rel = f"{model_name}/{SUITE_NAME}/p{pi:02d}_s{s_i:02d}.png"
         if save_images:
             img.save(img_root / f"p{pi:02d}_s{s_i:02d}.png")
@@ -255,6 +274,12 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--max_prompts", type=int, default=None)
     p.add_argument("--num_inference_steps", type=int, default=30)
     p.add_argument("--guidance_scale", type=float, default=7.5)
+    p.add_argument(
+        "--guidance_rescale",
+        type=float,
+        default=0.0,
+        help="CFG rescale at decode (0 = off). Use 0.7 for FaceInpaint qualitative protocol.",
+    )
     p.add_argument("--image_size", type=int, default=512)
     p.add_argument("--output_dir", type=str, default="./outputs/ci_dsr_eval")
     p.add_argument("--save_images", action="store_true", default=True)
@@ -351,6 +376,7 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
                         args.num_inference_steps,
                         args.guidance_scale,
                         args.image_size,
+                        guidance_rescale=args.guidance_rescale,
                     )
                     if save_images:
                         img.save(img_root / f"p{pi:02d}_s{s_i:02d}.png")
@@ -383,6 +409,7 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
                 args.image_size,
                 out_dir,
                 save_images,
+                guidance_rescale=args.guidance_rescale,
             )
             all_rows.extend(rows)
 
@@ -437,6 +464,9 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
             "lora_path": args.lora_path,
             "n_prompts": len(prompts),
             "num_seeds": args.num_seeds,
+            "num_inference_steps": args.num_inference_steps,
+            "guidance_scale": args.guidance_scale,
+            "guidance_rescale": args.guidance_rescale,
             "eval_models": eval_models,
             "suite": SUITE_NAME,
             "vlm_model": None if args.skip_vlm else args.vlm_model,

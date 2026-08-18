@@ -54,7 +54,7 @@ from torchvision import transforms
 from tqdm.auto import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 
-from eval.sd_utils import find_lora_dir, free_mem
+from eval.sd_utils import find_lora_dir, free_mem, generate_image
 
 IMAGENET_TEMPLATES_SMALL = [
     "a photo of {}",
@@ -139,6 +139,13 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--sample_steps", type=int, default=500)
     p.add_argument("--num_sample_images", type=int, default=4)
     p.add_argument("--sample_prompt", type=str, default=None)
+    p.add_argument("--guidance_scale", type=float, default=7.5)
+    p.add_argument(
+        "--guidance_rescale",
+        type=float,
+        default=0.0,
+        help="CFG rescale for mid-train samples (0 = off). Use 0.7 for FaceInpaint protocol.",
+    )
     p.add_argument("--mixed_precision", type=str, default="fp16", choices=["no", "fp16", "bf16"])
     p.add_argument("--device", type=str, default=None)
     p.add_argument(
@@ -232,25 +239,23 @@ def sample_images(
     n: int,
     seed: int,
     steps: int = 25,
+    guidance_scale: float = 7.5,
+    guidance_rescale: float = 0.0,
 ) -> None:
-    import torch
-
     out_dir.mkdir(parents=True, exist_ok=True)
     device = _module_device(pipe.unet)
     snapshot = _cast_pipe_fp32(pipe)
     try:
-        with torch.no_grad():
-            for i in range(n):
-                # Generator on CUDA can fail if pipe internals stay CPU-side;
-                # CPU generator is accepted by the SD pipeline.
-                g = torch.Generator(device="cpu").manual_seed(int(seed) + i)
-                img = pipe(
-                    prompt,
-                    num_inference_steps=steps,
-                    guidance_scale=7.5,
-                    generator=g,
-                ).images[0]
-                img.save(out_dir / f"sample_{i:02d}.png")
+        for i in range(n):
+            img = generate_image(
+                pipe,
+                prompt,
+                int(seed) + i,
+                steps,
+                guidance_scale,
+                guidance_rescale=guidance_rescale,
+            )
+            img.save(out_dir / f"sample_{i:02d}.png")
         print(f"Wrote {n} samples to {out_dir}")
     finally:
         _restore_pipe_dtypes(pipe, snapshot)
@@ -574,6 +579,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                             out_dir / "samples" / f"step_{global_step}",
                             args.num_sample_images,
                             args.seed,
+                            guidance_scale=args.guidance_scale,
+                            guidance_rescale=args.guidance_rescale,
                         )
                     except Exception as e:  # noqa: BLE001
                         print(
